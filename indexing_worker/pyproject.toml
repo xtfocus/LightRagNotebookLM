@@ -1,0 +1,84 @@
+[project]
+name = "indexing-worker"
+version = "0.1.0"
+description = "Indexing worker for document processing pipeline"
+requires-python = ">=3.10,<4.0"
+dependencies = [
+    # Core dependencies
+    "loguru==0.7.3",
+    "pydantic>2.0",
+    "pydantic-settings<3.0.0,>=2.2.1",
+    "email-validator>=2.0.0",
+    
+    # Database
+    "psycopg[binary]<4.0.0,>=3.1.13",
+    "sqlmodel<1.0.0,>=0.0.21",
+    "asyncpg<1.0.0,>=0.29.0",
+    
+    # Kafka
+    "kafka-python>=2.0.2",
+    
+    # Qdrant
+    "qdrant-client>=1.7.0",
+    
+    # OpenAI
+    "openai>=1.0.0",
+    
+    # Document processing
+    "langchain>=0.1.0",
+    "langchain-text-splitters>=0.0.1",
+    "PyPDF2>=3.0.0",
+    "python-docx>=0.8.11",
+    
+    # URL processing
+    "markitdown[all]==0.1.2",
+    "aiohttp>=3.8.0",
+    
+    # File storage
+    "minio==7.2.15",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest<8.0.0,>=7.4.3",
+    "pytest-asyncio<1.0.0,>=0.23.0",
+    "mypy<2.0.0,>=1.8.0",
+    "ruff<1.0.0,>=0.2.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.mypy]
+strict = true
+exclude = ["venv", ".venv"]
+
+[tool.ruff]
+target-version = "py310"
+exclude = []
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ARG001", # unused arguments in functions
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "W191",  # indentation contains tabs
+    "B904",  # Allow raising exceptions without from e, for HTTPException
+]
+
+[tool.ruff.lint.pyupgrade]
+# Preserve types, even if a file imports `from __future__ import annotations`.
+keep-runtime-typing = true 

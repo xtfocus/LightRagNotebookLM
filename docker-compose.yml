@@ -1,0 +1,475 @@
+services:
+
+  prestart:
+    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+    build:
+      context: ./fastapi_backend
+    networks:
+      - my_network
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+    command: bash scripts/prestart.sh
+    env_file:
+      - .env
+    environment:
+      - DOMAIN=${DOMAIN}
+      - FRONTEND_HOST=${FRONTEND_HOST?Variable not set}
+      - ENVIRONMENT=${ENVIRONMENT}
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
+      - SECRET_KEY=${SECRET_KEY?Variable not set}
+      - FIRST_SUPERUSER=${FIRST_SUPERUSER?Variable not set}
+      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD?Variable not set}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL}
+      - POSTGRES_SERVER=db
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - SENTRY_DSN=${SENTRY_DSN}
+      - BACKEND_API_PREFIX=${BACKEND_API_PREFIX}
+
+
+  backend:
+    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+    build:
+      context: fastapi_backend
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+      qdrant:
+        condition: service_healthy
+      prestart:
+        condition: service_completed_successfully
+
+    env_file:
+      - .env
+    environment:
+      - DOMAIN=${DOMAIN}
+      - FRONTEND_HOST=${FRONTEND_HOST?Variable not set}
+      - ENVIRONMENT=${ENVIRONMENT}
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
+      - SECRET_KEY=${SECRET_KEY?Variable not set}
+      - FIRST_SUPERUSER=${FIRST_SUPERUSER?Variable not set}
+      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD?Variable not set}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL}
+      - POSTGRES_SERVER=db
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - SENTRY_DSN=${SENTRY_DSN}
+      - BACKEND_API_PREFIX=${BACKEND_API_PREFIX}
+      # OpenAI Configuration
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-text-embedding-3-small}
+      - OPENAI_EMBEDDING_DIMENSION=${OPENAI_EMBEDDING_DIMENSION:-1536}
+      # Indexing Worker Configuration
+      - INDEXING_WORKER_BATCH_SIZE=${INDEXING_WORKER_BATCH_SIZE:-10}
+      - INDEXING_WORKER_POLL_INTERVAL=${INDEXING_WORKER_POLL_INTERVAL:-5}
+      - INDEXING_WORKER_CHUNK_SIZE=${INDEXING_WORKER_CHUNK_SIZE:-1000}
+      - INDEXING_WORKER_CHUNK_OVERLAP=${INDEXING_WORKER_CHUNK_OVERLAP:-200}
+      # File Processing Limits
+      - MAX_PDF_SIZE_BYTES=${MAX_PDF_SIZE_BYTES:-10485760}
+      - MAX_DOCX_SIZE_BYTES=${MAX_DOCX_SIZE_BYTES:-10485760}
+      - MAX_TXT_SIZE_BYTES=${MAX_TXT_SIZE_BYTES:-10485760}
+      - MIN_FILE_SIZE_BYTES=${MIN_FILE_SIZE_BYTES:-100}
+      # Source Management Configuration
+      - MAX_CONCURRENT_PROCESSING_PER_USER=${MAX_CONCURRENT_PROCESSING_PER_USER:-5}
+      # URL Processing Configuration
+      - URL_PROCESSING_TIMEOUT_SECONDS=${URL_PROCESSING_TIMEOUT_SECONDS:-25}
+      # Text Processing Configuration
+      - MAX_BINARY_NULL_RATIO=${MAX_BINARY_NULL_RATIO:-0.1}
+      # Legacy file size limits
+      - MAX_FILE_SIZE_BYTES=${MAX_FILE_SIZE_BYTES:-104857600}
+      - MAX_TOTAL_UPLOAD_SIZE_BYTES=${MAX_TOTAL_UPLOAD_SIZE_BYTES:-524288000}
+      - ALLOWED_FILE_TYPES=${ALLOWED_FILE_TYPES:-pdf,doc,docx,txt,md,csv,xlsx,xls,ppt,pptx}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${BACKEND_PORT:-8000}${BACKEND_API_PREFIX}/utils/health-check/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    networks:
+      - my_network
+    volumes:
+      - fastapi-venv:/app/.venv
+      - ./local-shared-data:/app/shared-data
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1.5G
+        reservations:
+          cpus: '0.5'
+          memory: 768M
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./fastapi_backend
+          target: /app
+
+  db:
+    image: postgres:17
+    restart: always
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_DB=${POSTGRES_DB?Variable not set}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      retries: 3
+      start_period: 30s
+      timeout: 10s
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - my_network
+    volumes:
+      - app-db-data:/var/lib/postgresql/data/pgdata
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+
+  langgraphdb:
+    image: postgres:17
+    restart: always
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_PASSWORD=${LANGGRAPHDB_PASSWORD?Variable not set}
+      - POSTGRES_USER=${LANGGRAPHDB_USER?Variable not set}
+      - POSTGRES_DB=${LANGGRAPHDB_NAME?Variable not set}
+      - POSTGRES_SERVER=langgraphdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LANGGRAPHDB_USER} -d ${LANGGRAPHDB_NAME}"]
+      interval: 30s
+      retries: 3
+      start_period: 30s
+      timeout: 10s
+    ports:
+      - "${LANGGRAPHDB_PORT:-5433}:5432"
+    networks:
+      - my_network
+    volumes:
+      - langgraph-db-data:/var/lib/postgresql/data/pgdata
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+  frontend:
+    build:
+      context: ./nextjs-frontend
+    user: node
+    restart: always
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    networks:
+      - my_network
+    environment:
+      NODE_ENV: development
+      NODE_OPTIONS: "--max-old-space-size=3072"
+      NEXT_TELEMETRY_DISABLED: 1
+      API_BASE_URL: http://backend:8000
+      NEXT_PUBLIC_BACKEND_API_PREFIX: ${BACKEND_API_PREFIX}
+      NEXT_PUBLIC_AGENT_API_PREFIX: ${AGENT_API_PREFIX}
+      AGENT_API_PREFIX: ${AGENT_API_PREFIX}
+      AGENT_URL: http://agent:8000${AGENT_API_PREFIX}
+      AGENT_AGUI_URL: http://agent:8000${AGENT_API_PREFIX}/chat-agui/
+      OPENAPI_OUTPUT_FILE: ./shared-data/openapi.json
+    # Development mode: use the following volumes and command for hot reload
+    volumes:
+      - ./nextjs-frontend:/app
+      - nextjs-node-modules:/app/node_modules
+      - ./local-shared-data:/app/shared-data
+    command: pnpm dev
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 5G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./nextjs-frontend
+          target: /app
+    # For production, comment out the above 'volumes' and 'command', and use the default CMD in Dockerfile (pnpm start)
+    # volumes: []
+    # command: ["pnpm", "start"]
+
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - "${MAILHOG_SMTP_PORT:-1025}:1025" # SMTP server
+      - "${MAILHOG_WEB_PORT:-8025}:8025" # Web UI
+    networks:
+      - my_network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+
+  agent:
+    image: '${DOCKER_AGENT_BACKEND?Variable not set}:${TAG-latest}'
+    build:
+      context: ./fastapi_agent
+    ports:
+      - "${AGENT_PORT:-8200}:8000"
+    restart: always
+    environment:
+      - POSTGRES_USER=${LANGGRAPHDB_USER}
+      - POSTGRES_PASSWORD=${LANGGRAPHDB_PASSWORD}
+      - POSTGRES_SERVER=langgraphdb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${LANGGRAPHDB_NAME}
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - PYTHONUNBUFFERED=1
+      - AGENT_API_PREFIX=${AGENT_API_PREFIX}
+    networks:
+      - my_network
+    depends_on:
+      langgraphdb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${AGENT_PORT:-8000}/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1.5G
+        reservations:
+          cpus: '0.25'
+          memory: 768M
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./fastapi_agent
+          target: /app
+
+  minio:
+    image: minio/minio
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_WEB_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-changeme}
+    volumes:
+      - minio_data:/data
+    networks:
+      - my_network
+    command: server --console-address ":9001" /data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:${MINIO_API_PORT:-9000}/minio/health/live" ]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Kafka (KRaft mode)
+  kafka:
+    image: apache/kafka:latest
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+      - "${KAFKA_EXTERNAL_PORT:-9094}:9094"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - my_network
+    healthcheck:
+      test: ["CMD-SHELL", "./opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Kafka UI
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "${KAFKA_UI_PORT:-8080}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_READONLY: "false"
+    networks:
+      - my_network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - my_network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+  # Indexing Worker
+  indexing-worker:
+    image: '${DOCKER_IMAGE_WORKER?Variable not set}:${TAG-latest}'
+    build:
+      context: ./indexing_worker
+    depends_on:
+      kafka:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_SERVER=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - PYTHONUNBUFFERED=1
+      # OpenAI Configuration
+      - OPENAI_MODEL=${OPENAI_MODEL:-text-embedding-3-small}
+      - OPENAI_EMBEDDING_DIMENSION=${OPENAI_EMBEDDING_DIMENSION:-1536}
+      # Indexing Worker Configuration
+      - INDEXING_WORKER_BATCH_SIZE=${INDEXING_WORKER_BATCH_SIZE:-10}
+      - INDEXING_WORKER_POLL_INTERVAL=${INDEXING_WORKER_POLL_INTERVAL:-5}
+      - INDEXING_WORKER_CHUNK_SIZE=${INDEXING_WORKER_CHUNK_SIZE:-1000}
+      - INDEXING_WORKER_CHUNK_OVERLAP=${INDEXING_WORKER_CHUNK_OVERLAP:-200}
+      # File Processing Limits
+      - MAX_PDF_SIZE_BYTES=${MAX_PDF_SIZE_BYTES:-10485760}
+      - MAX_DOCX_SIZE_BYTES=${MAX_DOCX_SIZE_BYTES:-10485760}
+      - MAX_TXT_SIZE_BYTES=${MAX_TXT_SIZE_BYTES:-10485760}
+      - MIN_FILE_SIZE_BYTES=${MIN_FILE_SIZE_BYTES:-100}
+      # URL Processing Configuration
+      - URL_PROCESSING_TIMEOUT_SECONDS=${URL_PROCESSING_TIMEOUT_SECONDS:-25}
+      # Text Processing Configuration
+      - MAX_BINARY_NULL_RATIO=${MAX_BINARY_NULL_RATIO:-0.1}
+    networks:
+      - my_network
+    command: python -m app.workers.indexing_worker
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1.5G
+        reservations:
+          cpus: '0.5'
+          memory: 768M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import app.workers.indexing_worker; print('Worker healthy')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./indexing_worker
+          target: /app
+
+volumes:
+  app-db-data:
+  langgraph-db-data:
+  nextjs-node-modules:
+  fastapi-venv:
+  minio_data:
+  kafka_data:
+  qdrant_data:
+
+networks:
+  my_network:
+    driver: bridge
